@@ -97,7 +97,7 @@ def codificador_fuente(filename):
 
             #Archivo de audio
             case 'wav':
-                bkl = format(vk, '016b')
+                bkl = format(vk, '08b')
 
             #Imagen
             case 'bmp':
@@ -168,7 +168,7 @@ def descodificador_fuente(bfR, filename):
             params = tuple(decoded_params)
 
             #Ciclo
-            audio_data = bytes([int(bkR[k]+bkR[k+1], 2) for k in range(int(lenght/8), len(bkR), 2)])
+            audio_data = bytes([int(bkR[k], 2) for k in range(int(lenght/8), len(bkR))])
 
             # Escribir los bytes en un nuevo archivo .wav
             with wave.open(filename, 'wb') as audio_file:
