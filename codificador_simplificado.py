@@ -29,6 +29,7 @@ def codificador_binario(filename):
         case 'txt':
             with open(filename, 'r') as file:
                 data = file.read()
+                params=''
 
         #Archivo de audio
         case 'wav':
@@ -38,40 +39,6 @@ def codificador_binario(filename):
                 #Información de los parámetros de audio
                 params=wav_file.getparams()
 
-                #Codificar los parámetros
-                encoded_params = ''
-                text=False
-                for param in params:
-
-                    #Para los parámetros que son números
-                    if isinstance(param, int):
-                        encoded_params += format(param, '032b')
-
-                    #Para los paámetros que son texto
-                    elif isinstance(param, str):
-
-                        #Para el primer parámetro que no es texto
-                        if not text:
-
-                            #Longitud de los bits que representan números
-                            lenght_params=format(len(encoded_params), '032b')
-                            text=True
-
-                        #Ya se indicó la longitud de los bits que son números
-                        else:
-                            lenght_params=''
-
-                        #Codificación del string
-                        encoded_params += format(8*len(param), '032b')
-                        encoded_params += ''.join(format(ord(char), '08b') for char in param)
-
-                        #Longitud del string
-                        encoded_params=lenght_params+ encoded_params 
-
-                #Longitud de la codificación de los parámetros
-                lenght_params=format(32+len(encoded_params), '032b')
-                encoded_params=lenght_params+ encoded_params
-
         #Imagen
         case 'bmp':
             img = Image.open(filename)
@@ -79,6 +46,7 @@ def codificador_binario(filename):
 
             #Dimensiones de la imagen
             width, height = img.size
+            params=[width, height]
 
             #Recorrer la imagen pixel por pixel para recuperar la información RGB
             for y in range(height):
@@ -90,15 +58,6 @@ def codificador_binario(filename):
 
     #Arreglo bkT
     bkT=[]
-
-    #Los primeros dos bytes son las dimensiones de la imagen
-    if filename[-3:]=='bmp':
-        bkT.append(format(height, '016b'))
-        bkT.append(format(width, '016b'))
-
-    #Los primeros bits son los parámetros del audio
-    elif filename[-3:]=='wav':
-        bkT.append(encoded_params)
 
     #Ciclo
     for vk in data:
@@ -129,10 +88,10 @@ def codificador_binario(filename):
     #Concatenar secuencias de bits
     bfT = ''.join(bkT)
 
-    return bfT
+    return bfT, params
 
 #A partir del binario se reconstruye el archivo
-def decodificador_binario(bfR, filename):
+def decodificador_binario(bfR, filename, params):
 
     #Dividir la secuencia de bits en bloques de 8 bits
     bkR = [bfR[i:i+8] for i in range(0, len(bfR), 8)]  
@@ -160,35 +119,8 @@ def decodificador_binario(bfR, filename):
         #Archivo de audio
         case 'wav':
 
-            #Longitud de los parámetros (primeros 32 bits)
-            lenght=int(bfR[0:32], 2)
-
-            #Longitud de los parámetros que son números (segundos 32 bits)
-            lenght_int=int(bfR[32:64], 2)
-            
-            #Decodificar los parámetros de audio (int)
-            decoded_params = []
-            for i in range(64, 64+lenght_int, 32):
-                decoded_params.append(int(bfR[i:i+32], 2))
-
-            #Decodificar los parámetros de audio (str)
-            pos=64+lenght_int
-            while pos<lenght:
-
-                #Longitud de la palabra
-                word_lenght=int(bfR[pos:32+pos], 2)
-
-                #Decodificar la palabra
-                decoded_params.append(''.join(chr(int(bfR[i:i+8], 2)) for i in range(32+pos, 32+pos+word_lenght, 8)))
-
-                #Mover la posición
-                pos=32+pos+word_lenght
-
-            #Parámetros recuperados del audio original
-            params = tuple(decoded_params)
-
             #Ciclo
-            audio_data = bytes([int(bkR[k], 2) for k in range(int(lenght/8), len(bkR))])
+            audio_data = bytes([int(bkR[k], 2) for k in range(0, len(bkR))])
 
             # Escribir los bytes en un nuevo archivo .wav
             with wave.open(filename, 'wb') as audio_file:
@@ -199,14 +131,14 @@ def decodificador_binario(bfR, filename):
         case 'bmp':
             
             #Largo y ancho
-            height=int(bkR[0]+bkR[1], 2)
-            width=int(bkR[2]+bkR[3], 2)
+            height=params[1]
+            width=params[0]
 
             #Crear una nueva imagen con la misma resolución
             img = Image.new('RGB', (width, height))
 
             #Ciclo
-            j=4
+            j=0
             for y in range(height):
                 for x in range(width):
 
@@ -419,13 +351,13 @@ if __name__ == '__main__':
     output_file= output_file + input_file[-4:]
 
     #Codificar el archivo
-    bfT = codificador_binario(input_file)
+    bfT, params = codificador_binario(input_file)
 
     #Información enviada a través del canal
     bcR=codificador_canal(bfT)
 
     #Error
-    e=0.01
+    e=0.05
 
     #Canal binario simétrico. Se introduce un error p(e)
     bcl=error(bcR, e)
@@ -448,4 +380,4 @@ if __name__ == '__main__':
     print('Hubo ', fails, ' fallos en los bits de información recibidos. La razón de error es ', fails/len(bfT))
     
     #Decodificar la información
-    decodificador_binario(bfR, output_file)
+    decodificador_binario(bfR, output_file, params)
