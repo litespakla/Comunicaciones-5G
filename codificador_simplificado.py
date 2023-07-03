@@ -4,6 +4,7 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 from PIL import Image
+from scipy import signal
 
 #Bits de información
 k=4
@@ -20,7 +21,7 @@ G=np.hstack((P, np.eye(k)))
 #Matriz de paridad
 H=np.vstack((np.eye(n-k), P))
 
-#Número de símbolos en la modulación PAM
+#Número de símbolos en la modulación PAM y ASK
 M = 4
 
 #Número de bits por símbolo
@@ -30,7 +31,19 @@ b = int(np.log2(M))
 Ns = 20 
 
 #Relación señal a ruido
-SNR_dB = 10
+SNR_dB = 15
+
+#Frecuencia de la portadora (en Hz) ASK
+fc = 1000
+
+#Periodo de la portadora (en segundos)
+Ts = 1 / fc  
+
+#Frecuencia de muestreo en Hz
+Fs = int(Ns/Ts)   
+
+#Amplitud de la señal
+A = 1          
 
 #Convierte el archivo en binario
 def codificador_binario(filename):
@@ -425,8 +438,81 @@ def desmodulador_PAM(xR):
 
     return np.array(bcR)
 
+#Modular la señal en ASK
+def generar_pulso_ASK(bcl):
+
+    #Verificar que la secuencia sea de b bits
+    ceros=0
+    if len(bcl)%b!=0:
+        ceros=b-(len(bcl)%b)
+
+    #Los primeros b bits van a ser la cantidad de ceros agregada
+    bcl = format(ceros, '0' + str(b) +'b') + '0'*ceros + bcl
+
+    #Pasar la secuencia a un arreglo de bits
+    bcl=np.array([int(i) for i in bcl])
+
+    #Definir asignación de bits a símbolos
+    symbol_mapping = {i: (2 * i / (M - 1)) for i in range(M)}
+
+    #Inicializar arreglo para almacenar la secuencia de símbolos
+    symbols = np.zeros(len(bcl) // b, dtype=int)
+
+    #Asignar bits a símbolos
+    for i in range(len(bcl) // b):
+        bits = bcl[i * b:(i + 1) * b]
+        symbol = 0
+        for j in range(b):
+            symbol += bits[j] * 2**(b - j - 1)
+        symbols[i] = symbol
+
+    #Generar la señal portadora c(t)
+    t = np.linspace(0, Ts, Ns)
+    c = np.cos(2 * np.pi * fc * t)
+
+    #Generar la señal modulada x(t)
+    s = np.zeros(len(bcl) * Ns // b)
+    for i, symbol in enumerate(symbols):
+        s[i * Ns:(i + 1) * Ns] = symbol_mapping[symbol] * c
+
+    return s
+
+#Desmodular señal ASK
+def desmodulador_ASK(sR):
+        
+    # Definición de asignación de símbolos a bits
+    bits_a_simbolos = {format(i, '0'+str(b)+'b'): (2*i/(M-1)) for i in range(M)}
+    simbolos_a_bits = {v: k for k, v in bits_a_simbolos.items()}
+
+    # Dividir la secuencia de muestras en bloques de longitud Ns
+    sR = sR.reshape(-1, Ns)
+
+    #Detectar la envolvente de cada secuencia de muestras
+    envelope = np.abs(signal.hilbert(sR))  
+
+    #Muestrear la envolvente a la mitad de cada período de la portadora
+    yn = envelope[:, Ns//2 - 1]  
+
+    # Decidimos qué símbolo representa mejor cada promedio
+    a_estrella = [min(bits_a_simbolos.values(), key=lambda x:abs(x-yn[i])) for i in range(len(yn))]
+
+    # Convertimos los símbolos a bits
+    bcR = [simbolos_a_bits[a_estrella[i]] for i in range(len(a_estrella))]
+
+    # Convertimos la lista de cadenas de bits en un arreglo de bits
+    bcR = np.array([list(map(int, bcR[i])) for i in range(len(bcR))]).flatten()
+
+    #Primeros b bits son la cantidad de ceros agregada
+    ceros = int(''.join(str(s) for s in bcR[0:b]), 2)
+
+    #Se elimima la cantidad agregada de ceros
+    bcR=bcR[b+ceros:]
+
+    return np.array(bcR)
+
 #Main
 if __name__ == '__main__':
+    
     input_file = sys.argv[1]
     output_file = sys.argv[2]
 
@@ -434,8 +520,10 @@ if __name__ == '__main__':
     print('Prueba para un archivo')
 
     #Agregar la extensión
-    output_file1= output_file + '_canal_simetrico' + input_file[-4:]
-    output_file2= output_file + '_canal_ideal' + input_file[-4:]
+    output_file1= output_file + '_canal_simetrico_PAM' + input_file[-4:]
+    output_file2= output_file + '_canal_ideal_PAM' + input_file[-4:]
+    output_file3= output_file + '_canal_simetrico_ASK' + input_file[-4:]
+    output_file4= output_file + '_canal_ideal_ASK' + input_file[-4:]
 
     #Codificar el archivo (bits de información a la salida del codificador de la fuente)
     bfT, params = codificador_binario(input_file)
@@ -451,50 +539,81 @@ if __name__ == '__main__':
 
     #Canal ideal 
     bcl_i=bcR
-
+    
     #Modular para obtener la secuencia de muestras
-    xT_b = generar_pulso_PAM(bcl_b) #Simétrico
-    xT_i = generar_pulso_PAM(bcl_i) #Ideal
+    xT_b = generar_pulso_PAM(bcl_b) #Simétrico PAM
+    xT_i = generar_pulso_PAM(bcl_i) #Ideal PAN
+    sT_b = generar_pulso_ASK(bcl_b) #Simétrico ASK
+    sT_i = generar_pulso_ASK(bcl_i) #Ideal ASK
 
     #Medio de transmisión con ruido
-    xR_b = simular_medio_transmision_ruidoso(xT_b) #Simétrico
-    xR_i = simular_medio_transmision_ruidoso(xT_i) #Ideal
+    xR_b = simular_medio_transmision_ruidoso(xT_b) #Simétrico PAM
+    xR_i = simular_medio_transmision_ruidoso(xT_i) #Ideal PAM
+    sR_b = simular_medio_transmision_ruidoso(sT_b) #Simétrico ASK
+    sR_i = simular_medio_transmision_ruidoso(sT_i) #Ideal  ASK
 
     # Desmodular la señal recibida y obtener los bits recibidos
-    bcl_b = desmodulador_PAM(xR_b)  #Simétrico
+    bcl_b = desmodulador_PAM(xR_b)  #Simétrico PAM
     bcl_b=''.join(str(s) for s in bcl_b)
-    bcl_i = desmodulador_PAM(xR_i)  #Ideal
+    bcl_i = desmodulador_PAM(xR_i)  #Ideal PAM
     bcl_i=''.join(str(s) for s in bcl_i)
+    bcl_bA = desmodulador_ASK(sR_b)  #Simétrico ASK
+    bcl_bA=''.join(str(s) for s in bcl_bA)
+    bcl_iA = desmodulador_ASK(sR_i)  #Ideal ASK
+    bcl_iA=''.join(str(s) for s in bcl_iA)
 
     #Contar la cantidad de errores en la secuencia recibida
     fails_b=0
     fails_i=0
+    fails_bA=0
+    fails_iA=0
     for i in range(len(bcl_b)):
         if bcl_b[i]!=bcR[i]:
             fails_b+=1
         if bcl_i[i]!=bcR[i]:
             fails_i+=1
-    print('Hubo ', fails_b, ' fallos en la secuencia de bits recibida para el canal binario simétrico. La razón de error es ', fails_b/len(bcl_b))
-    print('Hubo ', fails_i, ' fallos en la secuencia de bits recibida para el canal ideal. La razón de error es ', fails_i/len(bcl_i), '\n')
+    for i in range(len(bcl_bA)):
+        #sprint(len(bcR), len(bcl_bA))
+        if bcl_bA[i]!=bcR[i]:
+            fails_bA+=1
+        if bcl_iA[i]!=bcR[i]:
+            fails_iA+=1
+    print('Hubo ', fails_b, ' fallos en la secuencia de bits recibida para el canal binario simétrico con modulación PAM. La razón de error es ', fails_b/len(bcl_b))
+    print('Hubo ', fails_i, ' fallos en la secuencia de bits recibida para el canal ideal con modulación PAM. La razón de error es ', fails_i/len(bcl_i), '\n')
+    print('Hubo ', fails_bA, ' fallos en la secuencia de bits recibida para el canal binario simétrico con modulación ASK. La razón de error es ', fails_bA/len(bcl_bA))
+    print('Hubo ', fails_iA, ' fallos en la secuencia de bits recibida para el canal ideal con modulación ASK. La razón de error es ', fails_iA/len(bcl_iA), '\n')
 
     #Bits de información recibidos
     bfR_b=decodificador_canal(bcl_b)
     bfR_i=decodificador_canal(bcl_i)
+    bfR_bA=decodificador_canal(bcl_bA)
+    bfR_iA=decodificador_canal(bcl_iA)
 
     #Contar la cantidad de errores en la información recibida
     fails_b=0
     fails_i=0
+    fails_bA=0
+    fails_iA=0
     for i in range(len(bfR_b)):
         if bfR_b[i]!=bfT[i]:
             fails_b+=1
         if bfR_i[i]!=bfT[i]:
             fails_i+=1
-    print('Hubo ', fails_b, ' fallos en los bits de información recibidos para el canal binario simétrico. La razón de error es ', fails_b/len(bfT))
-    print('Hubo ', fails_i, ' fallos en los bits de información recibidos para el canal ideal. La razón de error es ', fails_i/len(bfT))
+    for i in range(len(bfR_bA)):
+        if bfR_bA[i]!=bfT[i]:
+            fails_bA+=1
+        if bfR_iA[i]!=bfT[i]:
+            fails_iA+=1
+    print('Hubo ', fails_b, ' fallos en los bits de información recibidos para el canal binario simétrico con modulación PAM. La razón de error es ', fails_b/len(bfT))
+    print('Hubo ', fails_i, ' fallos en los bits de información recibidos para el canal ideal con modulación PAM. La razón de error es ', fails_i/len(bfT), '\n')
+    print('Hubo ', fails_bA, ' fallos en los bits de información recibidos para el canal binario simétrico con modulación ASK. La razón de error es ', fails_bA/len(bfT))
+    print('Hubo ', fails_iA, ' fallos en los bits de información recibidos para el canal ideal con modulación ASK. La razón de error es ', fails_iA/len(bfT))
     
     #Decodificar la información
     decodificador_binario(bfR_b, output_file1, params)
     decodificador_binario(bfR_i, output_file2, params)
+    decodificador_binario(bfR_bA, output_file3, params)
+    decodificador_binario(bfR_iA, output_file4, params)
 
     # Gráfico del pulso del PAM primeros 10 símbolos
     plt.plot(xT_b[0:10*Ns], color='black', linestyle='--', label='Pulso del PAM')
@@ -505,3 +624,32 @@ if __name__ == '__main__':
     plt.title('Comparación del pulso del PAM con y sin ruido')
     plt.legend()
     plt.show()    
+
+    # Definir ejes de tiempo para la señal modulada y portadora
+    t_mod = np.linspace(0, len(sR_i[0:10*Ns]) / Ns, len(sR_i[0:10*Ns]))
+    c = np.cos(2 * np.pi * fc * t_mod)
+
+    # Graficar la señal portadora
+    plt.figure(figsize=(20, 8))
+    plt.subplot(1, 3, 1)
+    plt.plot(t_mod, c)
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Amplitud')
+    plt.title('Señal Portadora')
+    plt.grid(True)
+
+    # Graficar la señal modulada ASK primeros 10 símbolos
+    plt.subplot(1, 3, 2)
+    plt.plot(t_mod, sR_i[0:10*Ns])
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Amplitud')
+    plt.title('Señal Modulada canal ideal')
+    plt.grid(True)
+
+    plt.subplot(1, 3, 3)
+    plt.plot(t_mod, sR_b[0:10*Ns])
+    plt.xlabel('Tiempo (s)')
+    plt.ylabel('Amplitud')
+    plt.title('Señal Modulada canal binario simétrico')
+    plt.grid(True)
+    plt.show()
